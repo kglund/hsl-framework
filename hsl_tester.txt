@@ -1,0 +1,52 @@
+#########################################################################################
+## Rule: hsl_tester
+## Description: This irule enables an admin to validate the HSL implementation on a given http vip.
+#########################################################################################
+when HTTP_REQUEST priority 900 {
+    if {[HTTP::has_responded]} {return}
+    if { [HTTP::query] contains "hsl_test" } {
+        set conn_close 0
+        if { [HTTP::query] contains "all_events" } {
+            set hsl_quick_log 1
+            set hsl_general 1
+            set hsl_lb_failed 1
+            set hsl_weak_cipher 1
+            set hsl_no_response_event 1
+            set hsl_log_headers 1
+            set conn_close 1
+            set hsl_custom_event 1
+        } 
+        if { [HTTP::query] contains "quick_log"} {
+            set hsl_quick_log 1
+            set quick_data "test"
+        }
+        if { [HTTP::query] contains "header"} {
+            set hsl_log_headers 1
+        }
+        if { [HTTP::query] contains "general"} {
+            set hsl_general 1
+        }
+        if { [HTTP::query] contains "lb_failed"} {
+            set hsl_lb_failed 1
+            set original_pool_tmp "test"
+            set original_tgenv "test"
+            set original_dc "test"
+            set original_pool "test"
+            set failed_member "test"
+            set fallback_pool "test"
+            set conn_close 1
+        }
+        if { [HTTP::query] contains "weak_cipher"} {
+            set hsl_weak_cipher 1
+        }
+        if { [HTTP::query] contains "custom"} {
+            set hsl_custom_field1 "aaa"
+            set hsl_custom_field2 "bbb"
+            set hsl_custom_event 1
+        }
+
+        if { $conn_close } {
+            HTTP::respond 200 content "hsl test executed" noserver Content-Type "text/plain" Connection Close
+        }
+    }
+}

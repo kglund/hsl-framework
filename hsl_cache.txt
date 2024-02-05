@@ -1,0 +1,139 @@
+#########################################################################################
+## Rule: hsl_cache
+## Description: This logging framework is designed for vips with a caching profile
+#########################################################################################
+
+when CACHE_REQUEST priority 500 {
+  set hsl_cache_hits [CACHE::hits]
+  set hsl_cache_fresh [CACHE::fresh]
+  set hsl_cache_age [CACHE::age]
+
+  set hsl_cache_info "\"cache\":\{\"hits\":\"[CACHE::hits]\",\"isFresh\":\"[CACHE::fresh]\",\"age_seconds\":\"[CACHE::age]\"\},"
+}
+
+when CACHE_RESPONSE priority 999 {
+
+    set hsl_no_response_event 0
+
+    if { not [info exists hsl_enabled] } {
+        set hsl_enabled "false"
+        log local0. "hsl_enabled was unset in hsl_logformat CACHE_RESPONSE for vip [virtual name]"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+        set hsl_final_time [clock format [clock seconds] -format {%H:%M:%S}]
+
+        set redirect_location "n/a"
+        if { [HTTP::is_redirect] } {
+            set redirect_location [HTTP::header value "Location"]
+        }
+
+        set hsl_event_types "\"event\":\{"
+        set hsl_event_info ""
+        set hsl_event_string ""
+        set send_hsl 0
+
+        if { [info exists hsl_quick_log] && ${hsl_quick_log} } {
+            append hsl_event_types "\"quick_log\":\"true\"," 
+            append quick_data ""
+
+            append hsl_event_info "\"quick_log\":\{\"data\":\"${quick_data}\"\},"
+
+            append hsl_event_string "quick_log|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_quick_log 0
+        }
+        if { [info exists hsl_general] && ${hsl_general} } {
+            append hsl_event_types "\"general\":\"true\","
+            append hsl_event_string "general|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_general 0
+        }
+        if { [info exists hsl_lb_failed] && ${hsl_lb_failed} } {
+            append hsl_event_types "\"lb_failed\":\"true\"," 
+
+            append original_pool ""
+            append failed_member ""
+            append ltm_time_lbfail ""
+            append original_pool_active_members ""
+            append lbfail_info ""
+
+            append hsl_event_info "\"lb_failed\":\{\"event_info\":\"${lbfail_info}\",\"failed_pool\":\"${original_pool}\",\"failed_pool_member\":\"${failed_member}\",\"ltm_time_lbfail\":\"${ltm_time_lbfail}\",\"original_pool_active_members\":\"${original_pool_active_members}\"\}," 
+
+            append hsl_event_string "lb_failed|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_lb_failed 0
+        }
+        if { [info exists hsl_weak_cipher] && ${hsl_weak_cipher} } {
+            append hsl_event_types "\"weak_cipher\":\"true\","
+            append hsl_event_string "weak_cipher|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_weak_cipher 0
+        }
+        if { [info exists hsl_custom_event] && ${hsl_custom_event} } {
+            append hsl_event_types "\"custom_event\":\"true\","
+            append hsl_event_string "custom_event|"
+            append hsl_sev_string 1
+
+            append hsl_custom_field1 ""
+            append hsl_custom_field2 ""
+
+            append hsl_event_info "\"custom_event\":\{\"field1\":\"${hsl_custom_field1}\",\"field2\":\"${hsl_custom_field2}\"\},"
+
+            set send_hsl 1
+            set hsl_custom_event 0
+        }
+
+        if { ${send_hsl} } {
+
+            set hsl_event_types [string trim ${hsl_event_types} ","]\}
+            set hsl_event_info [string trim ${hsl_event_info} ","],
+            set hsl_event_string [string trim ${hsl_event_string} "|"]
+
+            if { ${hsl_event_info} eq "," } {
+                set hsl_event_info ""
+            }
+
+            if { ${hsl_cookie_info} != "" } {
+                append hsl_cookie_info "\}"
+            }
+
+            if { ${hsl_sev_string} contains "4" } {
+                set hsl_severity "critical"
+            } elseif { ${hsl_sev_string} contains "3" } {
+                set hsl_severity "error"
+            } elseif { ${hsl_sev_string} contains "2" } {
+                set hsl_severity "warning"
+            } else {
+                set hsl_severity "info"
+            }
+
+
+            append hsl_cacheable ""
+            append hsl_cache_hits ""
+            append hsl_cache_fresh ""
+            append hsl_cache_age ""
+
+            set hsl_cache_info "\"cache\":\{\"hits\":\"${hsl_cache_hits}\",\"isFresh\":\"${hsl_cache_fresh}\",\"age_seconds\":\"${hsl_cache_age}\",\"cacheable\":\"${hsl_cacheable}\"\},"
+
+            if { [ catch { set hsl_req_clicks [expr { ${clicks} - ${hsl_req_ts} }] } ] } {
+                set hsl_req_clicks -1
+            }
+
+            set cache_control [HTTP::header value Cache-Control]
+            if { $cache_control contains "," } {
+              set cache_control "dirty"
+            }
+
+            if { [ catch { set hsl_string "\"event_type\":\"hsl_http\",\"event_stage\":\"CACHE_RESPONSE\",\"http_status\":\"200\",\"response\":\{\"content_length\":\"[HTTP::header value "Content-Length"]\",\"cache-control\":\"${cache_control}\",\"header_count\":\"[HTTP::header count]\"\},${hsl_cache_info}\"ltm_time_final\":\"${hsl_final_time}\",\"ltm_proc_time_clicks\":\"${hsl_req_clicks}\",\"server_elapsed_time_ms\":\"${hsl_server_time}\",\"severity\":\"${hsl_severity}\",\"all_events\":\"${hsl_event_string}\",\"redirect_location\":\"${redirect_location}\",${hsl_event_types},${hsl_event_info}${hsl_preflight_info},${hsl_tcp_info},${hsl_cookie_info},${hsl_lb_info}${hsl_ssl_info}${hsl_header_info}" } ] } {
+                set hsl_string "\"event_type\":\"hsl_failure\",\"details\":\"Failed to set hsl_string in CACHE_RESPONSE of hsl_http on [virtual name]\""
+            }
+
+            HSL::send $hsl \{${hsl_string}\}
+        }
+    }
+}

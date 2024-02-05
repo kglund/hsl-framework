@@ -1,0 +1,32 @@
+#########################################################################################
+## Rule: hsl_ssl
+## Description: This is designed as a companion irule to hsl_http to apply to vips with an ssl profile
+#########################################################################################
+
+when CLIENTSSL_HANDSHAKE priority 500 {
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        if { not ([SSL::cipher version] eq "TLSv1.2" or [SSL::cipher version] eq "TLSv1.3") } {
+            set hsl_weak_cipher 1
+        }
+        if { not ([class match [SSL::cipher name] equals preferred_client_ciphers ]) } {
+            set hsl_weak_cipher 1
+        }
+        set ssl_client_cipher [SSL::cipher name]
+        set ssl_client_version [SSL::cipher version]
+        set ssl_client_bits [SSL::cipher bits]
+    }
+}
+
+when SERVERSSL_HANDSHAKE priority 500 {
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        if { not ([SSL::cipher version] eq "TLSv1.2" or [SSL::cipher version] eq "TLSv1.3") } {
+            set hsl_weak_cipher 1
+        }
+        if { not [class match [SSL::cipher name] equals preferred_server_ciphers ] } {
+            set hsl_weak_cipher 1
+        }
+        set ssl_server_cipher [SSL::cipher name]
+        set ssl_server_version [SSL::cipher version]
+        set ssl_server_bits [SSL::cipher bits]
+    }
+}

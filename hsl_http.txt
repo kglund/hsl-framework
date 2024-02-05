@@ -1,0 +1,474 @@
+#########################################################################################
+## Rule: hsl_http
+## Description: This logging framework is designed for vips with an http profile
+#########################################################################################
+
+when RULE_INIT priority 1 {
+    set static::hsl_cpu_switch "on"
+    log local0. "hsl_cpu_switch enabled.  CPU is at [cpu usage 15secs] over the last 15 seconds"
+}
+
+when CLIENT_ACCEPTED priority 100 {
+    set hsl_enabled [class lookup "hsl_enabled" "global_config"]
+    if { "on" eq ${static::hsl_cpu_switch} && [cpu usage 15secs] > 90} {
+        set static::hsl_cpu_switch "off"
+        log local0. "hsl_cpu_switch DISABLED due to CPU usage of [cpu usage 15secs]"
+    }
+    if { "off" eq ${static::hsl_cpu_switch} } {
+        set hsl_enabled "false"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+        set hsl [HSL::open -publisher /Common/hsl]
+        set hsl_lb_info ""
+        set hsl_sev_string ""
+        set hsl_header_info ""
+        set hsl_cookie_info ""
+
+        #set event types here
+        set hsl_no_response_event 0
+        set hsl_quick_log 0
+        set hsl_general 0
+        set hsl_lb_failed 0
+        set hsl_weak_cipher 0
+        set hsl_log_headers 0
+        #create your own custom event with the templated variables seen for hsl_custom_event
+        set hsl_custom_event 0
+
+        set ssl_client_cipher "-"
+        set ssl_client_version "-"
+        set ssl_client_bits "-"
+        set ssl_server_cipher "-"
+        set ssl_server_version "-"
+        set ssl_server_bits "-"
+
+        set client_remote "[IP::client_addr]:[TCP::client_port]"
+        set client_local  "[IP::local_addr clientside]:[TCP::local_port clientside]"
+        set client_rtt [TCP::rtt]
+        set hsl_tcp_info "\"tcp\":\{\"client_rtt_ms\":\"[expr ${client_rtt}/32]\",\"client_remote\":\"${client_remote}\",\"client_local\":\"${client_local}\"\}"
+        set hsl_preflight_info "\"device_name\":\"[info hostname]\",\"ltm_time_init\":\"[clock format [clock seconds] -format "%H:%M:%S"]\",\"virtual_name\":\"[virtual name]\""
+    }
+}
+
+when HTTP_REQUEST priority 1 {
+    if {[HTTP::has_responded]} {return}
+    set quick_data ""
+    if { "on" eq ${static::hsl_cpu_switch} && [cpu usage 15secs] > 90 } {
+        set static::hsl_cpu_switch "off"
+        log local0. "hsl_cpu_switch DISABLED due to CPU usage of [cpu usage 15secs]"
+    }
+    if { "off" eq ${static::hsl_cpu_switch} } {
+        set hsl_enabled "false"
+    }
+    if { "true" eq ${hsl_enabled} } {
+
+        set hsl_preflight_info ""
+        set hsl_lb_info ""
+        set hsl_cookie_info ""
+        set hsl_sev_string ""
+        set hsl_header_info ""
+        set hsl_cache_info ""
+
+        set hsl_cacheable "false"
+
+        #set timestamp variables
+        set hsl_req_ts [clock clicks]
+        set hsl_req_clicks 0
+
+        set hsl_request_init_time "[clock format [clock seconds] -format "%H:%M:%S"]"
+        if { [HTTP::header exists "True-Client-IP"] } {
+            set true_client_ip [HTTP::header value "True-Client-IP"]
+        } else {
+            set true_client_ip [IP::client_addr]
+        }
+
+        set request_uri [HTTP::uri]
+        set request_uri_encoded ""
+
+       if { ( [HTTP::uri] contains "\}" ) || ( [HTTP::uri] contains "\{" ) || ( [HTTP::uri] contains "\\" ) || ( [HTTP::uri] contains "\"") }
+        {
+            set request_uri_encoded [URI::encode [HTTP::uri]]
+            if { [ catch { set request_uri [HTTP::path]?query_strings=see_encoded_uri } ] } {
+                set request_uri "INVALID"
+            }
+        }
+
+        set referer [HTTP::header value "Referer"]
+        set referer_encoded ""
+
+        if { ( $referer contains "\}" ) || ( $referer contains "\{" ) || ( $referer contains "\\" ) || ( $referer contains "\"") }
+        {
+            set referer_encoded [URI::encode $referer]
+            set referer "see_encoded"
+        }
+
+        #if this is a problem for you, consider triggering a new event if this happens
+        if { [catch { set request_path [HTTP::path] } ] } {
+            set request_path "INVALID"
+        }
+
+        set content_type [HTTP::header value "Content-Type"]
+        if { ( $content_type contains "\}" ) || ( $content_type contains "\{" ) || ( $content_type contains "\\" ) || ( $content_type contains "\"") }
+        {
+            set content_type "-"
+        }
+
+        set ext ""
+        if { [HTTP::path] contains "." } {
+          set ext [string range [HTTP::path] [ string last "." [HTTP::path] ] end ]
+        } 
+
+        #set preflight info
+
+        set hsl_preflight_info "\"device_name\":\"[info hostname]\",\"ltm_time_init\":\"${hsl_request_init_time}\",\"file_extension\":\"${ext}\",\"client_ip\":\"${true_client_ip}\",\"domain\":\"[HTTP::host]\",\"uri\":\"${request_uri}\",\"uri_encoded\":\"${request_uri_encoded}\",\"path\":\"${request_path}\",\"virtual_name\":\"[virtual name]\",\"virtual_ip\":\"[IP::local_addr]\",\"http_method\":\"[HTTP::method]\",\"user_agent\":\"[ string trim [HTTP::header value "User-Agent"] \" ]\",\"tmm\":\"[TMM::cmp_unit]\",\"referer\":\"$referer\",\"referer_encoded\":\"${referer_encoded}\",\"http_is_keepalive\":\"[HTTP::is_keepalive]\",\"http_request_num\":\"[HTTP::request_num]\",\"request\":\{\"content_type\":\"${content_type}\",\"content_length\":\"[HTTP::header value "Content-Length"]\",\"cache-control\":\"[HTTP::header value "Cache-Control"]\",\"header_count\":\"[HTTP::header count]\",\"header_length\":\"[string length [HTTP::request]]\"\}"
+
+        set hsl_cookie_info "\"cookies\":\{\"example\":\"[string trim [HTTP::cookie value example_cookie] "\""]\""
+
+        #general logger: log on vip or uri
+        if { [class match -- "[HTTP::uri]" contains "hsl_general_logger"] } {
+            set hsl_general 1
+        }
+        if { [class match -- "[virtual name]" contains "hsl_general_logger"] } {
+            set hsl_general 1
+        }
+        if { [class match -- "[HTTP::uri]" contains "hsl_log_headers"] } {
+            set hsl_log_headers 1
+        }
+        if { [class match -- "[virtual name]" contains "hsl_log_headers"] } {
+            set hsl_log_headers 1
+        }
+        if { ${hsl_log_headers} } {
+            set hsl_header_info ",\"request_headers\":\{"
+            foreach h [HTTP::header names] {
+                set val [HTTP::header value $h]
+                if { ( $val contains "\}" ) || ( $val contains "\{" ) || ( $val contains "\\" ) || ( $val contains "\"") } {
+                    append hsl_header_info "\"$h\":\"[URI::encode $val]\","
+                } else {
+                    append hsl_header_info "\"$h\":\"$val\","
+                }
+            }
+            set hsl_header_info [string trimright ${hsl_header_info} ","]\}
+        }
+    }
+}
+
+when HTTP_REQUEST priority 999 {
+    if {[HTTP::has_responded]} {return}
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        set hsl_req_fin [clock clicks -milliseconds]
+        set clicks [clock clicks]
+        set hsl_req_clicks -1
+
+        set hsl_no_response_event 1
+
+        if { [info exists hsl_req_ts] } {
+            set hsl_req_clicks [expr { ${clicks} - ${hsl_req_ts} }]
+        }
+
+    }
+}
+
+when LB_SELECTED priority 100 {
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        set hsl_lb_info "\"selected_node\":\"[LB::server addr]\",\"selected_pool\":\"[LB::server pool]\",\"selected_port\":\"[LB::server port]\",\"persistence_key\":\"[LB::persist key]\","
+    }
+}
+
+when SERVER_CONNECTED priority 500 {
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        set server_local  "[IP::local_addr]:[TCP::local_port]"
+        set server_remote "[IP::server_addr]:[TCP::server_port]"
+        set server_rtt [TCP::rtt]
+        clientside { set client_rtt [TCP::rtt] }
+
+        set hsl_tcp_info "\"tcp\":\{\"client_rtt_ms\":\"[expr ${client_rtt}/32]\",\"client_remote\":\"${client_remote}\",\"client_local\":\"${client_local}\",\"server_rtt_ms\":\"[expr ${server_rtt}/32]\",\"server_local\":\"${server_local}\",\"server_remote\":\"${server_remote}\"\}"
+    }
+}
+
+when LB_FAILED priority 500 {
+    set hsl_lb_failed 1
+
+    set original_pool [LB::server pool]
+    set original_pool_active_members [active_members [LB::server pool]]
+    set ltm_time_lbfail "[clock format [clock seconds] -format "%H:%M:%S"]"
+    set lbfail_info [event info]
+}
+
+when HTTP_RESPONSE priority 999 {
+
+    set hsl_no_response_event 0
+
+    if { not [info exists hsl_enabled] } {
+        set hsl_enabled "false"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+
+        set hsl_final_time [clock format [clock seconds] -format {%H:%M:%S}]
+
+        set msec [clock clicks -milliseconds]
+
+        set hsl_server_time [expr { ${msec} - ${hsl_req_fin} }]
+
+        set redirect_location "n/a"
+        if { [HTTP::is_redirect] } {
+            set redirect_location [HTTP::header value "Location"]
+        }
+
+        set hsl_event_types "\"event\":\{"
+        set hsl_event_info ""
+        set hsl_event_string ""
+        set send_hsl 0
+
+        if { $hsl_server_time > [class lookup "hsl_slow_response_threshold" "global_config"] } {
+            append hsl_event_types "\"slow_response\":\"true\","
+            append hsl_event_string "slow_response|"
+            append hsl_sev_string 2
+            set send_hsl 1
+        }
+        if { [HTTP::status] >= 400 && [class match -- "[virtual name]" contains "hsl_errlog"] } {
+            if { [HTTP::status] != 404 || "true" eq [class lookup "hsl_errlog_404" "global_config"]} {
+                append hsl_event_types "\"server_error\":\"true\","
+                append hsl_event_string "server_error|"
+                append hsl_sev_string 3
+                set send_hsl 1
+            }
+        }
+        if { [info exists hsl_log_headers] && ${hsl_log_headers} } {
+            append hsl_header_info ",\"response_headers\":\{"
+            foreach h [HTTP::header names] {
+                foreach h [HTTP::header names] {
+                set val [HTTP::header value $h]
+                if { ( $val contains "\}" ) || ( $val contains "\{" ) || ( $val contains "\\" ) || ( $val contains "\"") } {
+                    append hsl_header_info "\"$h\":\"[URI::encode $val]\","
+                } else {
+                    append hsl_header_info "\"$h\":\"$val\","
+                }
+            }
+            }
+            set hsl_header_info [string trimright ${hsl_header_info} ","]\}
+        }
+        if { [info exists hsl_quick_log] && ${hsl_quick_log} } {
+            append hsl_event_types "\"quick_log\":\"true\"," 
+            append quick_data ""
+            append hsl_event_info "\"quick_log\":\{\"data\":\"${quick_data}\"\},"
+            append hsl_event_string "quick_log|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_quick_log 0
+        }
+        if { [info exists hsl_general] && ${hsl_general} } {
+            append hsl_event_types "\"general\":\"true\","
+            append hsl_event_string "general|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_general 0
+        }
+        if { [info exists hsl_lb_failed] && ${hsl_lb_failed} } {
+            append hsl_event_types "\"lb_failed\":\"true\"," 
+
+
+            append original_pool ""
+            append failed_member ""
+            append ltm_time_lbfail ""
+            append original_pool_active_members ""
+            append lbfail_info ""
+
+            append hsl_event_info "\"lb_failed\":\{\"event_info\":\"${lbfail_info}\",\"failed_pool\":\"${original_pool}\",\"failed_pool_member\":\"${failed_member}\",\"ltm_time_lbfail\":\"${ltm_time_lbfail}\",\"original_pool_active_members\":\"${original_pool_active_members}\"\}," 
+
+            append hsl_event_string "lb_failed|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_lb_failed 0
+        }
+        if { [info exists hsl_weak_cipher] && ${hsl_weak_cipher} } {
+            append hsl_event_types "\"weak_cipher\":\"true\","
+            append hsl_event_string "weak_cipher|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_weak_cipher 0
+        }
+        if { [info exists hsl_custom_event] && ${hsl_custom_event} } {
+            append hsl_event_types "\"custom_event\":\"true\","
+            append hsl_event_string "custom_event|"
+            append hsl_sev_string 1
+
+            append hsl_custom_field1 ""
+            append hsl_custom_field2 ""
+
+            append hsl_event_info "\"custom_event\":\{\"field1\":\"${hsl_custom_field1}\",\"field2\":\"${hsl_custom_field2}\"\},"
+
+            set send_hsl 1
+            set hsl_custom_event 0
+        }
+
+        if { ${send_hsl} } {
+
+            set hsl_event_types [string trim ${hsl_event_types} ","]\}
+            set hsl_event_info [string trim ${hsl_event_info} ","],
+            set hsl_event_string [string trim ${hsl_event_string} "|"]
+
+            if { ${hsl_event_info} eq "," } {
+                set hsl_event_info ""
+            }
+
+            if { ${hsl_cookie_info} != "" } {
+                append hsl_cookie_info "\}"
+            }
+
+            if { ${hsl_sev_string} contains "4" } {
+                set hsl_severity "critical"
+            } elseif { ${hsl_sev_string} contains "3" } {
+                set hsl_severity "error"
+            } elseif { ${hsl_sev_string} contains "2" } {
+                set hsl_severity "warning"
+            } else {
+                set hsl_severity "info"
+            }
+
+            if { [ catch { set hsl_req_clicks [expr { ${clicks} - ${hsl_req_ts} }] } ] } {
+                set hsl_req_clicks -1
+            }
+
+            append hsl_cacheable ""
+            append hsl_cache_hits ""
+            append hsl_cache_fresh ""
+            append hsl_cache_age ""
+
+            set hsl_cache_info "\"cache\":\{\"hits\":\"${hsl_cache_hits}\",\"isFresh\":\"${hsl_cache_fresh}\",\"age_seconds\":\"${hsl_cache_age}\",\"cacheable\":\"${hsl_cacheable}\"\},"
+
+            set hsl_ssl_info "\"ssl\":\{\"client_cipher\":\"${ssl_client_cipher}\",\"client_version\":\"${ssl_client_version}\",\"client_bits\":\"${ssl_client_bits}\",\"server_cipher\":\"${ssl_server_cipher}\",\"server_version\":\"${ssl_server_version}\",\"server_bits\":\"${ssl_server_bits}\"\}"
+            set cache_control [HTTP::header value Cache-Control]
+            if { $cache_control contains "," } {
+              set cache_control "dirty"
+            }
+
+            if { [ catch { set hsl_string "\"event_type\":\"hsl_http\",\"event_stage\":\"HTTP_RESPONSE\",\"http_status\":\"[HTTP::status]\",\"response\":\{\"content_length\":\"[HTTP::header value "Content-Length"]\",\"header_count\":\"[HTTP::header count]\",\"cache-control\":\"${cache_control}\",\"expires\":\"[HTTP::header value Expires]\"\},\"ltm_time_final\":\"${hsl_final_time}\",\"ltm_proc_time_clicks\":\"${hsl_req_clicks}\",\"server_elapsed_time_ms\":\"${hsl_server_time}\",\"severity\":\"${hsl_severity}\",\"all_events\":\"${hsl_event_string}\",\"redirect_location\":\"${redirect_location}\",${hsl_event_types},${hsl_event_info}${hsl_preflight_info},${hsl_tcp_info},${hsl_cookie_info},${hsl_cache_info}${hsl_lb_info}${hsl_ssl_info}${hsl_header_info}" } ] } {
+                set hsl_string "\"event_type\":\"hsl_failure\",\"details\":\"Failed to set hsl_string in HTTP_RESPONSE of hsl_http on [virtual name]\""
+            }
+
+            HSL::send $hsl \{${hsl_string}\}
+        }
+
+    }
+}
+
+when CLIENT_CLOSED priority 100 {
+    if { not [info exists hsl_enabled] } {
+        set hsl_enabled "false"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+
+        set hsl_final_time [clock format [clock seconds] -format {%H:%M:%S}]
+
+        set hsl_event_types "\"event\":\{"
+        set hsl_event_info ""
+        set hsl_event_string ""
+        set send_hsl 0
+
+        if { [info exists hsl_quick_log] && ${hsl_quick_log} } {
+            append hsl_event_types "\"quick_log\":\"true\"," 
+            append quick_data ""
+            append hsl_event_info "\"quick_log\":\{\"data\":\"${quick_data}\"\},"
+            append hsl_event_string "quick_log|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_quick_log 0
+        }
+        if { [info exists hsl_general] && ${hsl_general} } {
+            append hsl_event_types "\"general\":\"true\","
+            append hsl_event_string "general|"
+            append hsl_sev_string 1
+            set send_hsl 1
+            set hsl_general 0
+        }
+        if { [info exists hsl_lb_failed] && ${hsl_lb_failed} } {
+            append hsl_event_types "\"lb_failed\":\"true\"," 
+
+            append original_pool ""
+            append failed_member ""
+            append ltm_time_lbfail ""
+            append original_pool_active_members ""
+            append lbfail_info ""
+
+            append hsl_event_info "\"lb_failed\":\{\"event_info\":\"${lbfail_info}\",\"failed_pool\":\"${original_pool}\",\"failed_pool_member\":\"${failed_member}\",\"ltm_time_lbfail\":\"${ltm_time_lbfail}\",\"original_pool_active_members\":\"${original_pool_active_members}\"\}," 
+
+            append hsl_event_string "lb_failed|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_lb_failed 0
+        }
+        if { [info exists hsl_weak_cipher] &&  ${hsl_weak_cipher} } {
+            append hsl_event_types "\"weak_cipher\":\"true\","
+            append hsl_event_string "weak_cipher|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_weak_cipher 0
+        }
+        if { [info exists hsl_no_response_event] && ${hsl_no_response_event} } {
+            append hsl_event_types "\"no_response\":\"true\","
+            append hsl_event_string "no_response|"
+            append hsl_sev_string 3
+            set send_hsl 1
+            set hsl_no_response_event 0
+        }
+        if { [info exists hsl_custom_event] && ${hsl_custom_event} } {
+            append hsl_event_types "\"custom_event\":\"true\","
+            append hsl_event_string "custom_event|"
+            append hsl_sev_string 1
+
+            append hsl_custom_field1 ""
+            append hsl_custom_field2 ""
+
+            append hsl_event_info "\"custom_event\":\{\"field1\":\"${hsl_custom_field1}\",\"field2\":\"${hsl_custom_field2}\"\},"
+
+            set send_hsl 1
+            set hsl_custom_event 0
+        }
+
+        if { ${send_hsl} } {
+
+            set hsl_event_types [string trim ${hsl_event_types} ","]\}
+            set hsl_event_info [string trim ${hsl_event_info} ","],
+            set hsl_event_string [string trim ${hsl_event_string} "|"]
+
+            if { ${hsl_sev_string} contains "4" } {
+                set hsl_severity "critical"
+            } elseif { ${hsl_sev_string} contains "3" } {
+                set hsl_severity "error"
+            } elseif { ${hsl_sev_string} contains "2" } {
+                set hsl_severity "warning"
+            } else {
+                set hsl_severity "info"
+            }
+
+            if { ${hsl_event_info} eq "," } {
+                set hsl_event_info ""
+            }
+
+            if { ${hsl_cookie_info} != "" } {
+                append hsl_cookie_info "\}"
+            }
+
+            if { [catch { set hsl_req_clicks [expr { ${clicks} - ${hsl_req_ts} }] } ] } {
+                set hsl_req_clicks -1
+            }
+
+            append hsl_cacheable ""
+            append hsl_cache_hits ""
+            append hsl_cache_fresh ""
+            append hsl_cache_age ""
+
+            set hsl_cache_info "\"cache\":\{\"hits\":\"${hsl_cache_hits}\",\"isFresh\":\"${hsl_cache_fresh}\",\"age_seconds\":\"${hsl_cache_age}\",\"cacheable\":\"${hsl_cacheable}\"\},"
+
+            set hsl_ssl_info "\"ssl\":\{\"client_cipher\":\"${ssl_client_cipher}\",\"client_version\":\"${ssl_client_version}\",\"client_bits\":\"${ssl_client_bits}\",\"server_cipher\":\"${ssl_server_cipher}\",\"server_version\":\"${ssl_server_version}\",\"server_bits\":\"${ssl_server_bits}\"\}"
+
+            if { [catch { set hsl_string "\"event_type\":\"hsl_http\",\"event_stage\":\"CLIENT_CLOSED\",\"ltm_time_final\":\"${hsl_final_time}\",\"ltm_proc_time_clicks\":\"${hsl_req_clicks}\",\"severity\":\"${hsl_severity}\",\"all_events\":\"${hsl_event_string}\",${hsl_event_types},${hsl_event_info}${hsl_preflight_info},${hsl_tcp_info},${hsl_cookie_info},${hsl_cache_info}${hsl_lb_info}${hsl_ssl_info}${hsl_header_info}" } ] } {
+                set hsl_string "\"event_type\":\"hsl_failure\",\"details\":\"Failed to set hsl_string in CLIENT_CLOSED of hsl_http on [virtual name]\""
+            }
+
+            HSL::send $hsl \{${hsl_string}\}
+        }
+    }
+}

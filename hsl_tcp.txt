@@ -1,0 +1,70 @@
+#########################################################################################
+## Rule: hsl_tcp
+## Description: HSL events for L3 traffic (no http profile required)
+#########################################################################################
+
+when RULE_INIT priority 1 {
+    set static::hsl_cpu_switch "on"
+    log local0. "hsl_cpu_switch enabled.  CPU is at [cpu usage 15secs] over the last 15 seconds"
+}
+
+when CLIENT_ACCEPTED priority 100 {
+    set hsl_enabled [class lookup "hsl_enabled" "global_config"]
+    if { "on" eq ${static::hsl_cpu_switch} && [cpu usage 15secs] > 90} {
+        set static::hsl_cpu_switch "off"
+        log local0. "hsl_cpu_switch DISABLED due to CPU usage of [cpu usage 15secs]"
+    }
+    if { "off" eq ${static::hsl_cpu_switch} } {
+        set hsl_enabled "false"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+        set hsl [HSL::open -publisher /Common/hsl]
+
+        set client_remote "[IP::client_addr]:[TCP::client_port]"
+        set client_local  "[IP::local_addr clientside]:[TCP::local_port clientside]"
+        set client_rtt [TCP::rtt]
+        set hsl_tcp_info "\"tcp\":\{\"client_rtt_ms\":\"[expr ${client_rtt}/32]\",\"client_remote\":\"${client_remote}\",\"client_local\":\"${client_local}\"\}"
+        set hsl_preflight_info "\"device_name\":\"[info hostname]\",\"ltm_time_init\":\"[clock format [clock seconds] -format "%H:%M:%S"]\",\"virtual_name\":\"[virtual name]\""
+    }
+}
+
+when SERVER_CONNECTED priority 500 {
+    set did_server_close 0
+    if { [info exists hsl_enabled] && "true" eq ${hsl_enabled} } {
+        set server_local  "[IP::local_addr]:[TCP::local_port]"
+        set server_remote "[IP::server_addr]:[TCP::server_port]"
+        set server_rtt [TCP::rtt]
+        clientside { set client_rtt [TCP::rtt] }
+
+        set hsl_tcp_info "\"tcp\":\{\"client_rtt_ms\":\"[expr ${client_rtt}/32]\",\"client_remote\":\"${client_remote}\",\"client_local\":\"${client_local}\",\"server_rtt_ms\":\"[expr ${server_rtt}/32]\",\"server_local\":\"${server_local}\",\"server_remote\":\"${server_remote}\"\}"
+    }
+}
+
+when SERVER_CLOSED priority 500 {
+    set did_server_close 1
+}
+
+when CLIENT_CLOSED priority 100 {
+    if { not [info exists hsl_enabled] } {
+        set hsl_enabled "false"
+        log local0. "hsl_enabled was unset in hsl_logformat CLIENT_CLOSED"
+    }
+
+    if { "true" eq ${hsl_enabled} } {
+        set hsl_final_time [clock format [clock seconds] -format {%H:%M:%S}]
+
+        append hsl_preflight_info ""
+        append did_server_close ""
+        append hsl_final_time ""
+        append hsl_tcp_info ""
+
+        if { [catch { set hsl_string "\"event_type\":\"hsl_tcp\",\"event_stage\":\"CLIENT_CLOSED\",\"ltm_time_final\":\"${hsl_final_time}\",${hsl_preflight_info},${hsl_tcp_info},\"server_closed\":\"${did_server_close}\"" } ] } {
+            set hsl_string "\"event_type\":\"hsl_failure\",\"details\":\"Failed to set hsl_string in hsl_tcp on [virtual name]\""
+        }
+
+        HSL::send $hsl \{${hsl_string}\}
+
+    }
+
+}
