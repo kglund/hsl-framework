@@ -78,6 +78,8 @@ when HTTP_REQUEST priority 1 {
         set hsl_request_init_time "[clock format [clock seconds] -format "%H:%M:%S"]"
         if { [HTTP::header exists "True-Client-IP"] } {
             set true_client_ip [HTTP::header value "True-Client-IP"]
+        } elseif { [HTTP::header exists "X-Forwarded-For"] } {
+            set true_client_ip [HTTP::header value "X-Forwarded-For"]
         } else {
             set true_client_ip [IP::client_addr]
         }
