@@ -32,4 +32,60 @@ This framework assumes the existence of the below data-groups.  Here are sample 
 A VIP should have either the `hsl_tcp` or `hsl_http` irule applied to log HSL events.  For HTTP vips, you can additionally add `http_ssl` if you have SSL profiles applied, or `hsl_cache` if you have a caching profile applied.  These will enrich the log events defined in `hsl_http`.
 
 ## event catalog
-Here is a quick description of application logging events exposed out-of-the-box
+Here is a quick description of application logging events exposed out-of-the-box:
+
+| Event Name    | slow_response               |
+| :---          | :---              |
+| valid stages  | HTTP_RESPONSE             |
+| severity      | warning                  |
+| description   | triggered by default when a request exceeds the response time threshold defined in the `global_config` datagroup                 |
+| custom fields | n/a            |
+
+| Event Name    | server_error             |
+| :---          | :---              |
+| stages        | HTTP_RESPONSE                  |
+| severity      | error                  |
+| description   | triggered for http status >= 400 if error logging is enabled in the datagroup `hsl_errlog`                  |
+| custom fields | n/a                  |
+
+| Event Name    | quick_log               |
+| :---          | :---              |
+| stages        | HTTP_RESPONSE, CLIENT_CLOSED, CACHE_RESPONSE |
+| severity      | info                  |
+| description   | can be triggered in an irule by setting `set hsl_quick_log 1` to add a log line to remote logs                  |
+| custom fields | quick_log.data                  |
+
+| Event Name    | general             |
+| :---          | :---              |
+| stages        | HTTP_RESPONSE, CLIENT_CLOSED, CACHE_RESPONSE                  |
+| severity      | info                  |
+| description   | logs traffic as defined in the datagroup `hsl_general_logger`                  |
+| custom fields | n/a                  |
+
+| Event Name    | lb_failed                |
+| :---          | :---              |
+| stages        | HTTP_RESPONSE, CLIENT_CLOSED                  |
+| severity      | error                  |
+| description   | triggered anytime the `LB_FAILED` event is triggered on a request; processes at the end of a successful retry OR client close      |
+| custom fields | lb_failed.original_pool, lb_failed.failed_member, lb_failed.ltm_time_lbfail, lb_failed.original_pool_active_members      |
+
+| Event Name    | weak_cipher             |
+| :---          | :---              |
+| stages        | HTTP_RESPONSE, CLIENT_CLOSED, CACHE_RESPONSE                  |
+| severity      | error                  |
+| description   | log triggered via irule `hsl_ssl` when client or cert handshake users ciphers not defined in the datagroups `preferred_client_ciphers` or `preferred_server_ciphers`  |
+| custom fields |  weak_cipher.ssl_client_cipher, weak_cipher.ssl_client_version, weak_cipher.ssl_client_bits, weak_ciphers.ssl_server_cipher, weak_cipher.ssl_server_version, weak_cipher.ssl_server_bits  |
+
+| Event Name    | no_response            |
+| :---          | :---              |
+| stages        | CLIENT_CLOSED                |
+| severity      | error                  |
+| description   | triggered when no HTTP_RESPONSE event is processed for a request                  |
+| custom fields | n/a                  |
+
+| Event Name    | custom_event    |
+| :---          | :---              |
+| stages        |                   |
+| severity      |                   |
+| description   | This is just a template for whatever custom events you would like to integrate with your own infrastructure!  Does not trigger as-is. |
+| custom fields |                   |
